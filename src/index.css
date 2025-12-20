@@ -8,3 +8,8 @@ html, body, #root {
   background: #070707;
   overflow: hidden; /* Prevents double scrollbars on zoom */
 }
+
+body {
+  background-color: #070707;
+  margin: 0;
+}
