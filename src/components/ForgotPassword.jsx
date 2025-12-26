@@ -25,8 +25,8 @@ export default function ForgotPassword({ onBack, onOtpVerified }) {
       <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch max-h-[95vh]">
         <div className="flex flex-col justify-center px-6 lg:px-16 py-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center font-black text-black text-xl">S</div>
-            <span className="font-bold tracking-[0.4em] text-[10px]">SATURN / AI</span>
+            <img src="/logo.png" alt="KICKR Logo" className="h-10 w-auto object-contain" />
+            <span className="font-bold tracking-[0.4em] text-[10px]">KICKR / AI</span>
           </div>
           <h1 className="text-5xl font-['Archivo_Black'] tracking-tighter mb-1 leading-none">RECOVER</h1>
           <p className="text-[10px] tracking-[0.3em] opacity-30 mb-8 uppercase">

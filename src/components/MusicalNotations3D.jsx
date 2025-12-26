@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { Float, Center } from '@react-three/drei';
 
-// --- THE 3D ENGINE ---
 function MusicNote({ type, ...props }) {
   const shape = useMemo(() => {
     const s = new THREE.Shape();
@@ -16,7 +15,6 @@ function MusicNote({ type, ...props }) {
     }
     return s;
   }, [type]);
-
   return (
     <Float {...props}>
       <Center>
@@ -29,7 +27,6 @@ function MusicNote({ type, ...props }) {
   );
 }
 
-// --- THE COMPONENT YOU WERE TRYING TO IMPORT ---
 export default function MusicalNotations3D() {
   return (
     <group>
