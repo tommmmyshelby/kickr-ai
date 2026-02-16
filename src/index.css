@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap');
+@import "tailwindcss";
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #070707;
+  overflow: hidden; 
+}
+
+body {
+  background-color: #070707;
+  margin: 0;
+  color: white;
+}
+
+/* --- STYLISH NEURAL SCROLLBAR --- */
+/* For Webkit (Chrome, Safari, Edge) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px; /* Very thin */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02); /* Nearly transparent */
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(251, 191, 36, 0.1); /* Subtle yellow tint */
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #fbbf24; /* Bright yellow on hover */
+  box-shadow: 0 0 10px #fbbf24;
+}
+
+/* For Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(251, 191, 36, 0.2) transparent;
+}

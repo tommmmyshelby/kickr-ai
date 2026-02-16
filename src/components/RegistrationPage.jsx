@@ -1,0 +1,89 @@
+import React, { useState, Suspense, useEffect } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { Environment } from '@react-three/drei';
+import MusicalNotations3D from './MusicalNotations3D';
+import MusicWave from './MusicWave';
+
+export default function RegistrationPage({ onBackToLogin, onOtpVerified }) {
+  const [step, setStep] = useState('info'); 
+  const [formData, setFormData] = useState({ fullName: '', username: '', email: '', confirmEmail: '' });
+  const [otp, setOtp] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => { 
+    const verify = async () => {
+      if (otp.length === 6) {
+        try {
+          const res = await fetch('http://127.0.0.1:8000/auth/verify-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: formData.email, otp: otp })
+          });
+          if (res.ok) onOtpVerified(formData.email, formData.fullName, formData.username, otp);
+          else setError("INVALID_SECURITY_KEY");
+        } catch (err) { setError("CONNECTION_FAILED"); }
+      }
+    };
+    verify();
+  }, [otp]);
+
+  const handleInfoSubmit = async (e) => {
+    e.preventDefault();
+    if (formData.email !== formData.confirmEmail) { setError('EMAILS DO NOT MATCH'); return; }
+    setIsLoading(true); setError('');
+
+    try {
+      const res = await fetch('http://127.0.0.1:8000/auth/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email, flow_type: 'registration' })
+      });
+      if (res.ok) setStep('otp');
+      else {
+        const data = await res.json();
+        setError(data.detail || "REQUEST_FAILED");
+      }
+    } catch (err) { setError("SERVER_OFFLINE"); }
+    finally { setIsLoading(false); }
+  };
+
+  return (
+    <div className="h-screen w-full bg-[#070707] flex items-center justify-center p-6 uppercase text-white overflow-hidden">
+      <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-10 h-full py-10">
+        <div className="flex flex-col justify-center px-16">
+          <h1 className="text-5xl font-['Archivo_Black'] tracking-tighter mb-2 uppercase">SIGN UP</h1>
+          <p className="text-[10px] tracking-[0.3em] opacity-30 mb-10 uppercase">NEW RESEARCHER IDENTITY</p>
+          <form onSubmit={handleInfoSubmit} className="space-y-4 max-w-md">
+            {step === 'info' ? (
+              <>
+                <input type="text" required value={formData.fullName} onChange={(e)=>setFormData({...formData, fullName: e.target.value})} placeholder="FULL NAME" className="w-full bg-[#0d0d0d] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-yellow-400 text-sm" />
+                <input type="text" required value={formData.username} onChange={(e)=>setFormData({...formData, username: e.target.value.toLowerCase()})} placeholder="CHOOSE USERNAME" className="w-full bg-[#0d0d0d] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-yellow-400 text-sm" />
+                <input type="email" required value={formData.email} onChange={(e)=>setFormData({...formData, email: e.target.value})} placeholder="EMAIL ADDRESS" className="w-full bg-[#0d0d0d] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-yellow-400 text-sm" />
+                <input type="email" required value={formData.confirmEmail} onChange={(e)=>setFormData({...formData, confirmEmail: e.target.value})} placeholder="CONFIRM EMAIL" className="w-full bg-[#0d0d0d] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-yellow-400 text-sm" />
+                <button type="submit" disabled={isLoading} className="w-full bg-white text-black font-black py-5 rounded-2xl hover:bg-yellow-400 transition-all text-xs uppercase">{isLoading ? 'ESTABLISHING...' : 'VERIFY IDENTITY'}</button>
+              </>
+            ) : (
+              <div className="space-y-6">
+                <label className="text-[10px] text-yellow-400 font-bold tracking-widest text-center block uppercase">ENTER 6-DIGIT OTP SENT TO MAIL</label>
+                <input type="text" maxLength="6" value={otp} onChange={(e)=>setOtp(e.target.value)} placeholder="••••••" className="w-full bg-[#0d0d0d] border border-yellow-400/30 rounded-2xl py-6 outline-none text-center text-4xl tracking-[0.5em] text-yellow-400" />
+              </div>
+            )}
+            {error && <p className="text-red-500 text-[10px] font-bold text-center uppercase">{error}</p>}
+            <button type="button" onClick={onBackToLogin} className="w-full text-center text-[10px] tracking-widest opacity-40 hover:opacity-100 underline uppercase">RETURN TO LOGIN</button>
+          </form>
+        </div>
+        <div className="hidden lg:flex flex-col bg-[#0a0a0a] rounded-[3rem] p-10 relative border border-white/10 shadow-2xl">
+           <div className="absolute inset-0 opacity-80"><Canvas><Suspense fallback={null}><MusicalNotations3D /></Suspense><Environment preset="city" /></Canvas></div>
+           <div className="relative z-10 h-full flex flex-col justify-end uppercase">
+              <h2 className="text-6xl font-['Archivo_Black'] leading-[0.9] mb-6 uppercase">START YOUR <br/> <span className="italic font-light opacity-60 uppercase">RESEARCH</span></h2>
+              <div className="bg-white/5 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/10 w-full min-h-[160px] flex flex-col justify-between">
+                <h3 className="text-xl font-bold uppercase text-white">ACCESS NEURAL ENGINE</h3>
+                <div className="flex items-center justify-between"><MusicWave count={6}/><span className="text-[9px] text-yellow-400 font-bold tracking-widest uppercase">JOIN_PROTOCOL</span></div>
+              </div>
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
