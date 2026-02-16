@@ -6,12 +6,17 @@ html, body, #root {
   margin: 0;
   padding: 0;
   background: #070707;
+<<<<<<< HEAD
   overflow: hidden; 
+=======
+  overflow: hidden; /* Prevents double scrollbars on zoom */
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
 }
 
 body {
   background-color: #070707;
   margin: 0;
+<<<<<<< HEAD
   color: white;
 }
 
@@ -41,4 +46,6 @@ body {
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(251, 191, 36, 0.2) transparent;
+=======
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
 }

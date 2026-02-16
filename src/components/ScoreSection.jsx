@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 
 export default function ScoreSection({ data, currentTime }) {
   const containerRef = useRef();
+<<<<<<< HEAD
   const scrollRef = useRef();
   const [notePositions, setNotePositions] = useState([]);
   const [scoreHeight, setScoreHeight] = useState(500);
@@ -46,6 +47,32 @@ export default function ScoreSection({ data, currentTime }) {
           stave.addClef('percussion');
           if (lineNr === 0) stave.addTimeSignature('4/4');
         }
+=======
+  const [notePositions, setNotePositions] = useState([]);
+
+  useEffect(() => {
+    // 1. SAFETY CHECK: If no data or timeline, do nothing
+    if (!data || !data.timeline || !Array.isArray(data.timeline)) return;
+
+    try {
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+
+      const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
+      const measureWidth = 280;
+      const totalWidth = data.timeline.length * measureWidth + 100;
+      
+      renderer.resize(totalWidth, 200);
+      const context = renderer.getContext();
+      const positions = [];
+
+      data.timeline.forEach((measure, mIdx) => {
+        const stave = new Stave(10 + (mIdx * measureWidth), 40, measureWidth);
+        
+        // Add Clef and Time only to the first measure
+        if (mIdx === 0) stave.addClef('percussion').addTimeSignature('4/4');
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
         
         stave.setContext(context).draw();
 
@@ -54,8 +81,14 @@ export default function ScoreSection({ data, currentTime }) {
           const keys = [];
           let isOpen = false;
 
+<<<<<<< HEAD
           if (measure.CYMB?.[i]) keys.push('a/5/x2');
           if (measure["O-HAT"]?.[i]) { keys.push('g/5/x'); isOpen = true; }
+=======
+          // Mapping logic
+          if (measure.CYMB?.[i]) keys.push('a/5/x2');
+          if (measure["O-HAT"]?.[i]) { keys.push('g/5/x'); isOpen = True; }
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
           if (measure.HATS?.[i] && !isOpen) keys.push('g/5/x');
           if (measure.SNARE?.[i]) keys.push('c/5');
           if (measure.TOMS?.[i]) keys.push('e/5');
@@ -77,6 +110,7 @@ export default function ScoreSection({ data, currentTime }) {
         new Formatter().joinVoices([voice]).format([voice], measureWidth - 50);
         voice.draw(context, stave);
         
+<<<<<<< HEAD
         const beams = Beam.generateBeams(notes);
         beams.forEach((b) => b.setContext(context).draw());
 
@@ -89,6 +123,17 @@ export default function ScoreSection({ data, currentTime }) {
             x: (n.getAbsoluteX() * 1.2), // Adjust for scaling
             y: (y * 1.2),               // Adjust for scaling
             time: (mIdx * beatDuration * 4) + (nIdx * stepDuration)
+=======
+        // Generate Beams (The horizontal lines)
+        const beams = Beam.generateBeams(notes);
+        beams.forEach((b) => b.setContext(context).draw());
+
+        // Save X-coordinates for the playhead
+        notes.forEach((n, nIdx) => {
+          positions.push({
+            x: n.getAbsoluteX(),
+            time: (mIdx * (60 / data.bpm) * 4) + (nIdx * (60 / data.bpm / 4))
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
           });
         });
       });
@@ -99,6 +144,7 @@ export default function ScoreSection({ data, currentTime }) {
     }
   }, [data]);
 
+<<<<<<< HEAD
   // Playhead coordinate logic
   const getPlayheadPos = () => {
     if (notePositions.length === 0) return { x: -100, y: 0 };
@@ -136,6 +182,28 @@ export default function ScoreSection({ data, currentTime }) {
           style={{ top: 0, left: 0, marginTop: '75px', transformOrigin: 'center' }}
         />
       </div>
+=======
+  // Find the X position of the current time in the song
+  const getPlayheadX = () => {
+    if (notePositions.length === 0) return -100;
+    const closest = notePositions.reduce((prev, curr) => 
+      Math.abs(curr.time - currentTime) < Math.abs(prev.time - currentTime) ? curr : prev
+    );
+    return closest.x;
+  };
+
+  return (
+    <div className="relative w-full overflow-x-auto bg-white p-10 rounded-[2.5rem] border-4 border-yellow-400 min-h-[250px] custom-scrollbar shadow-2xl">
+      <div ref={containerRef} className="relative" />
+      
+      {/* THE MOVING PLAYHEAD (VERTICAL LINE) */}
+      <motion.div 
+        animate={{ x: getPlayheadX() }}
+        transition={{ duration: 0.1, ease: "linear" }}
+        className="absolute top-0 bottom-0 w-1 bg-yellow-500/40 border-x border-yellow-600 z-10 pointer-events-none"
+        style={{ left: 0 }}
+      />
+>>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
     </div>
   );
 }
