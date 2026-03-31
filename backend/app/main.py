@@ -1,210 +1,422 @@
 import os
 import shutil
-from fastapi import FastAPI, HTTPException, status, Body, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
-<<<<<<< HEAD
 import asyncio
-=======
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+import re
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Union
+from bson import ObjectId
+
+from fastapi import FastAPI, HTTPException, status, Body, UploadFile, File, Form, Request
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Internal modules
-from .database import users_collection, otp_collection
+from .database import users_collection, otp_collection, history_collection
 from .auth import (
-    get_password_hash, 
-    verify_password, 
-    create_access_token, 
-    generate_otp, 
-    send_verification_email
+    get_password_hash,
+    verify_password,
+    create_access_token,
+    generate_otp,
+    send_verification_email,
+    send_report_email
 )
-<<<<<<< HEAD
-from .audio_engine import analyze_drums 
+from .audio_engine import analyze_drums, generate_professional_sheet
 
-app = FastAPI(title="KICKR AI - Unified Backend")
+app = FastAPI(title="KICKR AI - Pro Engine")
 
-=======
-from .audio_engine import analyze_drums # Ensure audio_engine.py is in the same folder
+# --- PATH RESOLUTION ---
+BASE_DIR = Path(__file__).parent.resolve()
+UPLOAD_DIR = BASE_DIR / "uploads"
+STATIC_PATH = BASE_DIR / "static"
+SCORES_DIR = STATIC_PATH / "scores"
 
-app = FastAPI(title="KICKR AI - Unified Backend")
+for path in [UPLOAD_DIR, STATIC_PATH, SCORES_DIR]:
+    path.mkdir(parents=True, exist_ok=True)
 
-# --- CORS SETTINGS ---
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+app.mount("/static", StaticFiles(directory=str(STATIC_PATH)), name="static")
+
+print(f"\n--- [SYSTEM START] ---")
+print(f"ROOT: {BASE_DIR}")
+print(f"SERVING IMAGES FROM: {STATIC_PATH}")
+print(f"----------------------\n")
+
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], 
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-<<<<<<< HEAD
-=======
-# Ensure upload directory exists
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-UPLOAD_DIR = "uploads"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+# --- OTP RATE LIMIT: max 3 requests per email per 10 minutes ---
+OTP_RATE_LIMIT = 3
+OTP_RATE_WINDOW_MINUTES = 10
+
+
+async def check_otp_rate_limit(email: str):
+    """Raises 429 if the email has requested OTPs too many times recently."""
+    window_start = datetime.utcnow() - timedelta(minutes=OTP_RATE_WINDOW_MINUTES)
+    recent_count = await otp_collection.count_documents({
+        "email": email.lower(),
+        "created_at": {"$gte": window_start}
+    })
+    if recent_count >= OTP_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"TOO_MANY_REQUESTS: Wait {OTP_RATE_WINDOW_MINUTES} minutes before requesting another OTP."
+        )
+
+
+# ─────────────────────────────────────────────
+#  HEARTBEAT
+# ─────────────────────────────────────────────
 
 @app.get("/")
 async def heartbeat():
-    return {"status": "KICKR_CORE_ONLINE", "version": "v4.0.1"}
+    return {"status": "ONLINE", "version": "v5.4.0"}
 
-<<<<<<< HEAD
+
+# ─────────────────────────────────────────────
+#  AI ANALYSIS
+# ─────────────────────────────────────────────
+
 @app.post("/analyze")
 async def analyze_audio(file: UploadFile = File(...), prompt: str = Form(None)):
     try:
-=======
-# --- AI ANALYSIS ENDPOINT (The fix for your 404) ---
-@app.post("/analyze")
-async def analyze_audio(
-    file: UploadFile = File(...), 
-    prompt: str = Form(None)
-):
-    try:
-        # 1. Save file temporarily
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(file_path, "wb") as buffer:
+        file_save_path = UPLOAD_DIR / file.filename
+        with open(file_save_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-<<<<<<< HEAD
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, analyze_drums, file_path, prompt)
-
-        if results["status"] == "ERROR":
-            raise HTTPException(status_code=500, detail=results["message"])
-=======
-        # 2. Run the Neural Engine from audio_engine.py
-        results = analyze_drums(file_path, prompt)
+        results = await loop.run_in_executor(None, analyze_drums, str(file_save_path), prompt)
 
         if results["status"] == "ERROR":
             raise HTTPException(status_code=500, detail=results["message"])
 
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+        ts = datetime.now().strftime("%H%M%S")
+        sheet_url_path = await loop.run_in_executor(
+            None, generate_professional_sheet, results, f"score_{ts}"
+        )
+
+        results["sheet_url"] = f"http://localhost:8000{sheet_url_path}" if sheet_url_path else None
+        results["file_name"] = file.filename
+
         return results
+    except Exception as e:
+        print(f"Analysis Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  HISTORY
+# ─────────────────────────────────────────────
+
+@app.post("/history/save")
+async def save_history(payload: dict = Body(...)):
+    try:
+        analysis_data = {
+            "user_email": payload.get("email").lower(),
+            "file_name": payload.get("file_name"),
+            "prompt": payload.get("prompt") or "Standard Extraction",
+            "bpm": payload.get("bpm"),
+            "accuracy": payload.get("accuracy"),
+            "timeline": payload.get("timeline"),
+            "transients": payload.get("transients"),
+            "sheet_url": payload.get("sheet_url"),
+            "timestamp": datetime.utcnow()
+        }
+        await history_collection.insert_one(analysis_data)
+        return {"status": "SUCCESS"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- AUTHENTICATION ENDPOINTS ---
+
+@app.get("/history/{email}")
+async def get_history(email: str):
+    try:
+        email_regex = re.compile(f"^{re.escape(email)}$", re.IGNORECASE)
+        cursor = history_collection.find({"user_email": email_regex}).sort("timestamp", -1)
+        history_list = await cursor.to_list(length=30)
+        for item in history_list:
+            item["_id"] = str(item["_id"])
+        return history_list
+    except Exception:
+        return []
+
+
+@app.delete("/history/delete/{session_id}")
+async def delete_history_item(session_id: str):
+    try:
+        result = await history_collection.delete_one({"_id": ObjectId(session_id)})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+        return {"status": "SUCCESS"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/history/clear/{email}")
+async def clear_history(email: str):
+    """
+    Wipe ALL history entries belonging to a specific email.
+    Security: only deletes documents where user_email matches exactly (case-insensitive).
+    """
+    try:
+        email_regex = re.compile(f"^{re.escape(email.lower())}$", re.IGNORECASE)
+        result = await history_collection.delete_many({"user_email": email_regex})
+        return {"status": "SUCCESS", "deleted_count": result.deleted_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  AUTHENTICATION
+# ─────────────────────────────────────────────
+
+@app.post("/auth/login")
+async def login(payload: dict = Body(...)):
+    identifier = payload.get("identifier", "").strip()
+    password = payload.get("password", "")
+
+    if not identifier or not password:
+        raise HTTPException(status_code=400, detail="MISSING_CREDENTIALS")
+
+    user = await users_collection.find_one({
+        "$or": [
+            {"email": identifier.lower()},
+            {"username": identifier.lower()}
+        ]
+    })
+    if not user or not verify_password(password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
+
+    token = create_access_token(data={"sub": user["email"]})
+    return {
+        "status": "SUCCESS",
+        "access_token": token,
+        "user": {
+            "email": user.get("email"),
+            "username": user.get("username")
+        }
+    }
+
 
 @app.post("/auth/request-otp")
 async def request_otp(payload: dict = Body(...)):
-    email = payload.get("email")
-    flow_type = payload.get("flow_type")
-<<<<<<< HEAD
-=======
-    if not email: raise HTTPException(status_code=400, detail="ID_REQUIRED")
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-    
-    user = await users_collection.find_one({"email": email})
-    if flow_type == "registration" and user:
-        raise HTTPException(status_code=400, detail="USER_ALREADY_REGISTERED")
-<<<<<<< HEAD
-    
-=======
-    if flow_type == "recovery" and not user:
-        raise HTTPException(status_code=404, detail="EMAIL_NOT_RECOGNIZED")
+    """
+    Request an OTP for registration or password recovery.
+    Security checks:
+      - Rate limit: max 3 OTPs per email per 10 minutes
+      - Registration flow: reject if email already registered
+      - Recovery flow: reject if email is NOT registered
+    """
+    email = payload.get("email", "").strip().lower()
+    flow_type = payload.get("flow_type", "registration")  # "registration" | "recovery"
 
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+    if not email:
+        raise HTTPException(status_code=400, detail="EMAIL_REQUIRED")
+
+    # Basic email format check
+    email_pattern = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    if not email_pattern.match(email):
+        raise HTTPException(status_code=400, detail="INVALID_EMAIL_FORMAT")
+
+    # Rate limit check
+    await check_otp_rate_limit(email)
+
+    existing_user = await users_collection.find_one({"email": email})
+
+    if flow_type == "registration":
+        # Block if already registered
+        if existing_user:
+            raise HTTPException(status_code=409, detail="EMAIL_ALREADY_REGISTERED")
+    elif flow_type == "recovery":
+        # Block if NOT registered
+        if not existing_user:
+            raise HTTPException(status_code=404, detail="EMAIL_NOT_FOUND")
+    else:
+        raise HTTPException(status_code=400, detail="INVALID_FLOW_TYPE")
+
+    # Invalidate any previous unexpired OTPs for this email + flow
+    await otp_collection.delete_many({"email": email, "flow_type": flow_type})
+
+    # Generate and store new OTP
     otp_code = generate_otp()
     expires_at = datetime.utcnow() + timedelta(minutes=10)
-    await otp_collection.update_one({"email": email}, {"$set": {"otp": otp_code, "expires_at": expires_at}}, upsert=True)
-    await send_verification_email(email, otp_code)
-    return {"status": "SUCCESS", "message": "KEY_DISPATCHED"}
+
+    await otp_collection.insert_one({
+        "email": email,
+        "otp_code": otp_code,
+        "flow_type": flow_type,
+        "expires_at": expires_at,
+        "created_at": datetime.utcnow(),
+        "verified": False
+    })
+
+    # Send email (non-blocking — don't expose send failure to user)
+    try:
+        await send_verification_email(email, otp_code)
+    except Exception as e:
+        print(f"[OTP EMAIL WARN] Could not send to {email}: {e}")
+
+    return {"status": "OTP_SENT"}
+
 
 @app.post("/auth/verify-otp")
-async def verify_otp_only(payload: dict = Body(...)):
-    email = payload.get("email")
-    user_otp = payload.get("otp")
-    stored = await otp_collection.find_one({"email": email})
-    if not stored or stored["otp"] != user_otp:
-        raise HTTPException(status_code=400, detail="INVALID_KEY")
-    return {"status": "SUCCESS"}
+async def verify_otp(payload: dict = Body(...)):
+    """
+    Verify a submitted OTP code.
+    Security checks:
+      - OTP must exist and match exactly
+      - OTP must not be expired (10 min window)
+      - OTP must not have already been used
+    Returns a short-lived verification token on success.
+    """
+    email = payload.get("email", "").strip().lower()
+    submitted_otp = payload.get("otp", "").strip()
+
+    if not email or not submitted_otp:
+        raise HTTPException(status_code=400, detail="MISSING_FIELDS")
+
+    record = await otp_collection.find_one({
+        "email": email,
+        "otp_code": submitted_otp
+    })
+
+    if not record:
+        raise HTTPException(status_code=400, detail="INVALID_OTP")
+
+    if record.get("verified"):
+        raise HTTPException(status_code=400, detail="OTP_ALREADY_USED")
+
+    if datetime.utcnow() > record["expires_at"]:
+        await otp_collection.delete_one({"_id": record["_id"]})
+        raise HTTPException(status_code=400, detail="OTP_EXPIRED")
+
+    # Mark OTP as verified (single-use enforcement)
+    await otp_collection.update_one(
+        {"_id": record["_id"]},
+        {"$set": {"verified": True}}
+    )
+
+    return {"status": "VERIFIED"}
+
 
 @app.post("/auth/register")
 async def register_user(payload: dict = Body(...)):
-<<<<<<< HEAD
-    email = payload.get("email")
-    username = payload.get("username") # NEW
-    
-    # Check if username is already taken
-    existing_user = await users_collection.find_one({"username": username})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="USERNAME_TAKEN")
-    
-    stored = await otp_collection.find_one({"email": email})
-=======
-    stored = await otp_collection.find_one({"email": payload.get("email")})
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-    if not stored or stored["otp"] != payload.get("otp"):
-        raise HTTPException(status_code=400, detail="VERIFICATION_FAILED")
+    """
+    Final registration step: create user account after OTP is verified.
+    Security checks:
+      - OTP must be verified before this can proceed
+      - Prevents duplicate accounts (email + username uniqueness)
+    """
+    email = payload.get("email", "").strip().lower()
+    username = payload.get("username", "").strip().lower()
+    full_name = payload.get("full_name", "").strip()
+    password = payload.get("password", "")
 
-    hashed_pass = get_password_hash(payload.get("password"))
-<<<<<<< HEAD
+    if not all([email, username, full_name, password]):
+        raise HTTPException(status_code=400, detail="MISSING_FIELDS")
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="PASSWORD_TOO_SHORT")
+
+    # Confirm OTP was actually verified for this email
+    otp_record = await otp_collection.find_one({
+        "email": email,
+        "flow_type": "registration",
+        "verified": True
+    })
+    if not otp_record:
+        raise HTTPException(status_code=403, detail="OTP_NOT_VERIFIED")
+
+    # Double-check uniqueness
+    if await users_collection.find_one({"email": email}):
+        raise HTTPException(status_code=409, detail="EMAIL_ALREADY_REGISTERED")
+    if await users_collection.find_one({"username": username}):
+        raise HTTPException(status_code=409, detail="USERNAME_TAKEN")
+
+    # Create user
     new_user = {
-        "full_name": payload.get("fullName"), 
-        "username": username, # NEW
-        "email": email, 
-        "hashed_password": hashed_pass, 
+        "full_name": full_name,
+        "username": username,
+        "email": email,
+        "hashed_password": get_password_hash(password),
         "created_at": datetime.utcnow()
     }
     await users_collection.insert_one(new_user)
-    await otp_collection.delete_one({"email": email})
-    return {"status": "SUCCESS"}
 
-@app.post("/auth/login")
-async def login(payload: dict = Body(...)):
-    identifier = payload.get("identifier") # Can be email or username
-    password = payload.get("password")
-    
-    # NEW: Search for the identifier in BOTH the email and username fields
-    user = await users_collection.find_one({
-        "$or": [
-            {"email": identifier},
-            {"username": identifier}
-        ]
+    # Clean up used OTP
+    await otp_collection.delete_many({"email": email, "flow_type": "registration"})
+
+    return {"status": "ACCOUNT_CREATED"}
+
+
+@app.post("/auth/reset-password")
+async def reset_password(payload: dict = Body(...)):
+    """
+    Final password reset step after OTP is verified.
+    """
+    email = payload.get("email", "").strip().lower()
+    password = payload.get("password", "")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="MISSING_FIELDS")
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="PASSWORD_TOO_SHORT")
+
+    # Confirm OTP was actually verified
+    otp_record = await otp_collection.find_one({
+        "email": email,
+        "flow_type": "recovery",
+        "verified": True
     })
-    
-    if not user or not verify_password(password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
-        
-    token = create_access_token(data={"sub": user["email"]})
-    return {"status": "SUCCESS", "access_token": token, "user": {"email": user["email"], "username": user["username"]}}
+    if not otp_record:
+        raise HTTPException(status_code=403, detail="OTP_NOT_VERIFIED")
 
-@app.post("/auth/reset-password")
-async def reset_password(payload: dict = Body(...)):
-    email = payload.get("email")
-    hashed_pass = get_password_hash(payload.get("password"))
-    res = await users_collection.update_one({"email": email}, {"$set": {"hashed_password": hashed_pass}})
-    if res.modified_count > 0:
-        await otp_collection.delete_one({"email": email})
-        return {"status": "SUCCESS"}
-    raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
-=======
-    new_user = {"full_name": payload.get("fullName"), "email": payload.get("email"), "hashed_password": hashed_pass, "created_at": datetime.utcnow()}
-    await users_collection.insert_one(new_user)
-    await otp_collection.delete_one({"email": payload.get("email")})
-    return {"status": "SUCCESS"}
+    user = await users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
 
-@app.post("/auth/reset-password")
-async def reset_password(payload: dict = Body(...)):
-    hashed_pass = get_password_hash(payload.get("password"))
-    res = await users_collection.update_one({"email": payload.get("email")}, {"$set": {"hashed_password": hashed_pass}})
-    if res.modified_count > 0:
-        await otp_collection.delete_one({"email": payload.get("email")})
-        return {"status": "SUCCESS"}
-    raise HTTPException(status_code=500, detail="UPDATE_FAILED")
+    await users_collection.update_one(
+        {"email": email},
+        {"$set": {"hashed_password": get_password_hash(password)}}
+    )
 
-@app.post("/auth/login")
-async def login(payload: dict = Body(...)):
-    user = await users_collection.find_one({"email": payload.get("email")})
-    if not user or not verify_password(payload.get("password"), user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="INVALID_CREDENTIALS")
-    token = create_access_token(data={"sub": user["email"]})
-    return {"status": "SUCCESS", "access_token": token, "user": {"email": user["email"]}}
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+    # Clean up used OTP
+    await otp_collection.delete_many({"email": email, "flow_type": "recovery"})
 
-@app.post("/auth/delete-account")
-async def delete_account(payload: dict = Body(...)):
-    await users_collection.delete_one({"email": payload.get("email")})
-    return {"status": "SUCCESS"}
+    return {"status": "PASSWORD_RESET"}
+
+
+# ─────────────────────────────────────────────
+#  REPORT
+# ─────────────────────────────────────────────
+
+@app.post("/report")
+async def submit_report(payload: dict = Body(...)):
+    try:
+        user_email = payload.get("email", "unknown")
+        message = payload.get("message", "")
+        if not message.strip():
+            raise HTTPException(status_code=400, detail="EMPTY_REPORT")
+        await send_report_email(user_email, message)
+        return {"status": "REPORT_SENT"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+#  AUDIO STREAMING
+# ─────────────────────────────────────────────
+
+@app.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    file_path = UPLOAD_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return FileResponse(str(file_path))

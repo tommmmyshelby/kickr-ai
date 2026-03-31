@@ -1,209 +1,246 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Articulation, Beam } from 'vexflow';
-import { motion } from 'framer-motion';
+import React, { useEffect, useRef } from 'react';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Beam } from 'vexflow';
 
-export default function ScoreSection({ data, currentTime }) {
+// ─── CONSTANTS ─────────────────────────────────────────────────────────────────
+const BLACK = '#000000';
+
+// Instrument priority order for the HANDS voice.
+// When multiple instruments fire on the same 16th step, we pick the
+// highest-priority ones up to MAX_KEYS_PER_CHORD — this prevents
+// noteheads from flying off the staff.
+const MAX_KEYS_PER_CHORD = 2;
+
+const HAND_MAP = [
+  // { key in timeline data, VexFlow pitch, optional notehead suffix }
+  { src: 'HATS',  pitch: 'g/5', head: 'x2' },   // Hi-hat  — top line, X
+  { src: 'CYMB',  pitch: 'a/5', head: 'x2' },   // Crash   — space above staff, X
+  { src: 'SNARE', pitch: 'c/5', head: null  },   // Snare   — 3rd space (middle)
+  { src: 'TOM1',  pitch: 'e/5', head: null  },   // Hi tom  — top space
+  { src: 'TOM2',  pitch: 'a/4', head: null  },   // Mid tom — 2nd space
+  { src: 'FLR',   pitch: 'f/4', head: null  },   // Fl tom  — 1st space
+];
+
+// Build the VexFlow key string
+const toVFKey = ({ pitch, head }) => head ? `${pitch}/${head}` : pitch;
+
+// ─── NOTE BUILDERS ─────────────────────────────────────────────────────────────
+
+function handNote(step, measure) {
+  const hits = HAND_MAP.filter(d => !!measure[d.src]?.[step]);
+  const limited = hits.slice(0, MAX_KEYS_PER_CHORD);
+
+  if (limited.length === 0) {
+    // Visible rest — use standard rest position
+    return new StaveNote({ keys: ['b/4'], duration: '16r', stem_direction: 1 })
+      .setStyle({ fillStyle: BLACK, strokeStyle: BLACK });
+  }
+
+  return new StaveNote({
+    keys: limited.map(toVFKey),
+    duration: '16',
+    stem_direction: 1,
+  }).setStyle({ fillStyle: BLACK, strokeStyle: BLACK });
+}
+
+function kickNote(step, measure) {
+  if (!measure.KICK?.[step]) {
+    // Invisible rest — no visual noise on quiet beats
+    return new StaveNote({ keys: ['c/5'], duration: '16r', stem_direction: -1 })
+      .setStyle({ fillStyle: 'transparent', strokeStyle: 'transparent' });
+  }
+  return new StaveNote({
+    keys: ['c/4'],          // Bass drum — sits just below the staff
+    duration: '16',
+    stem_direction: -1,
+  }).setStyle({ fillStyle: BLACK, strokeStyle: BLACK });
+}
+
+// ─── BEAMING ───────────────────────────────────────────────────────────────────
+// Groups notes into 4 beams per bar (one beam per beat = 4 × 16th notes)
+
+function drawBeams(notes, ctx) {
+  [0, 4, 8, 12].forEach(start => {
+    const group = notes.slice(start, start + 4).filter(n => !n.isRest());
+    if (group.length >= 2) {
+      try {
+        new Beam(group)
+          .setStyle({ fillStyle: BLACK, strokeStyle: BLACK })
+          .setContext(ctx)
+          .draw();
+      } catch (_) {}
+    }
+  });
+}
+
+// ─── RENDER ONE MEASURE ────────────────────────────────────────────────────────
+
+function renderMeasure(ctx, measure, x, y, staveW, noteW, showClef, showTimeSig) {
+  // Bar label
+  ctx.save();
+  ctx.setFont('monospace', 9, '');
+  ctx.setFillStyle('#888');
+  ctx.fillText(`BAR ${measure._idx + 1}`, x + 4, y - 8);
+  ctx.restore();
+
+  const stave = new Stave(x, y, staveW)
+    .setStyle({ fillStyle: BLACK, strokeStyle: BLACK });
+  if (showClef)    stave.addClef('percussion');
+  if (showTimeSig) stave.addTimeSignature('4/4');
+  stave.setContext(ctx).draw();
+
+  // Build all 16 notes
+  const handNotes = Array.from({ length: 16 }, (_, i) => handNote(i, measure));
+  const kickNotes = Array.from({ length: 16 }, (_, i) => kickNote(i, measure));
+
+  // Single formatter pass — one voice per stave keeps stems well-behaved
+  const vHands = new Voice({ num_beats: 4, beat_value: 4 })
+    .setMode(Voice.Mode.SOFT)
+    .addTickables(handNotes);
+
+  const vKick = new Voice({ num_beats: 4, beat_value: 4 })
+    .setMode(Voice.Mode.SOFT)
+    .addTickables(kickNotes);
+
+  new Formatter()
+    .joinVoices([vHands, vKick])
+    .format([vHands, vKick], noteW);
+
+  vHands.draw(ctx, stave);
+  vKick.draw(ctx, stave);
+
+  drawBeams(handNotes, ctx);
+  drawBeams(kickNotes, ctx);
+}
+
+// ─── COMPONENT ─────────────────────────────────────────────────────────────────
+
+export default function ScoreSection({ data }) {
   const containerRef = useRef();
-<<<<<<< HEAD
-  const scrollRef = useRef();
-  const [notePositions, setNotePositions] = useState([]);
-  const [scoreHeight, setScoreHeight] = useState(500);
 
   useEffect(() => {
-    if (!data || !data.timeline || !Array.isArray(data.timeline)) return;
-
+    if (!data?.timeline?.length) return;
     try {
-      if (containerRef.current) containerRef.current.innerHTML = '';
+      containerRef.current.innerHTML = '';
+
+      // ── Layout ───────────────────────────────────────────────────────────
+      const PER_ROW      = 2;      // 2 bars per line — the key to readability
+      const STAVE_W      = 520;    // Wide stave per bar
+      const LEFT         = 15;
+      const TOP          = 50;
+      const ROW_H        = 190;    // Row height — enough gap between rows
+
+      // Space consumed by clef + time sig on bar 1
+      const CLEF_W       = 45;
+      const TIMESIG_W    = 35;
+
+      const totalRows = Math.ceil(data.timeline.length / PER_ROW);
+      const pageW     = LEFT + PER_ROW * STAVE_W + 10;
+      const pageH     = TOP + totalRows * ROW_H + 40;
 
       const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-      
-      // CONFIGURATION FOR "BIG" LOOK
-      const pageWidth = 1000; // Matches standard document width
-      const measureWidth = 230; 
-      const measuresPerLine = 4;
-      const rowHeight = 150;
-      const totalLines = Math.ceil(data.timeline.length / measuresPerLine);
-      const totalHeight = (totalLines * rowHeight) + 150;
-      
-      setScoreHeight(totalHeight);
-      renderer.resize(pageWidth, totalHeight);
-      const context = renderer.getContext();
-      context.scale(1.2, 1.2); // Scale up the notation to make it "Big"
-      
-      const positions = [];
+      renderer.resize(pageW, pageH);
+      const ctx = renderer.getContext();
+      ctx.setFillStyle(BLACK);
+      ctx.setStrokeStyle(BLACK);
 
-      data.timeline.forEach((measure, mIdx) => {
-        // Calculate Row and Column for wrapping
-        const lineNr = Math.floor(mIdx / measuresPerLine);
-        const colNr = mIdx % measuresPerLine;
-        
-        const x = 50 + (colNr * measureWidth);
-        const y = 80 + (lineNr * rowHeight);
+      // Tag each measure with its index for bar label
+      const timeline = data.timeline.map((m, i) => ({ ...m, _idx: i }));
 
-        const stave = new Stave(x, y, measureWidth);
-        
-        // Add Clef and Time only at the start of each line
-        if (colNr === 0) {
-          stave.addClef('percussion');
-          if (lineNr === 0) stave.addTimeSignature('4/4');
-        }
-=======
-  const [notePositions, setNotePositions] = useState([]);
+      timeline.forEach((measure, mIdx) => {
+        const row          = Math.floor(mIdx / PER_ROW);
+        const col          = mIdx % PER_ROW;
+        const isFirstInRow = col === 0;
+        const isVeryFirst  = mIdx === 0;
 
-  useEffect(() => {
-    // 1. SAFETY CHECK: If no data or timeline, do nothing
-    if (!data || !data.timeline || !Array.isArray(data.timeline)) return;
+        const x = LEFT + col * STAVE_W;
+        const y = TOP + row * ROW_H;
 
-    try {
-      if (containerRef.current) {
-        containerRef.current.innerHTML = '';
-      }
+        // Deduct clef/time sig width from available note area
+        let noteW = STAVE_W - 30; // base padding
+        if (isFirstInRow) noteW -= CLEF_W;
+        if (isVeryFirst)  noteW -= TIMESIG_W;
 
-      const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-      const measureWidth = 280;
-      const totalWidth = data.timeline.length * measureWidth + 100;
-      
-      renderer.resize(totalWidth, 200);
-      const context = renderer.getContext();
-      const positions = [];
-
-      data.timeline.forEach((measure, mIdx) => {
-        const stave = new Stave(10 + (mIdx * measureWidth), 40, measureWidth);
-        
-        // Add Clef and Time only to the first measure
-        if (mIdx === 0) stave.addClef('percussion').addTimeSignature('4/4');
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-        
-        stave.setContext(context).draw();
-
-        const notes = [];
-        for (let i = 0; i < 16; i++) {
-          const keys = [];
-          let isOpen = false;
-
-<<<<<<< HEAD
-          if (measure.CYMB?.[i]) keys.push('a/5/x2');
-          if (measure["O-HAT"]?.[i]) { keys.push('g/5/x'); isOpen = true; }
-=======
-          // Mapping logic
-          if (measure.CYMB?.[i]) keys.push('a/5/x2');
-          if (measure["O-HAT"]?.[i]) { keys.push('g/5/x'); isOpen = True; }
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-          if (measure.HATS?.[i] && !isOpen) keys.push('g/5/x');
-          if (measure.SNARE?.[i]) keys.push('c/5');
-          if (measure.TOMS?.[i]) keys.push('e/5');
-          if (measure.KICK?.[i]) keys.push('f/4');
-
-          const isRest = keys.length === 0;
-          const note = new StaveNote({
-            clef: 'percussion',
-            keys: isRest ? ['b/4'] : keys,
-            duration: isRest ? '16r' : '16',
-          });
-
-          if (isOpen) note.addModifier(new Articulation('ao').setPosition(3), 0);
-          notes.push(note);
-        }
-
-        const voice = new Voice({ num_beats: 4, beat_value: 4 }).setMode(Voice.Mode.SOFT);
-        voice.addTickables(notes);
-        new Formatter().joinVoices([voice]).format([voice], measureWidth - 50);
-        voice.draw(context, stave);
-        
-<<<<<<< HEAD
-        const beams = Beam.generateBeams(notes);
-        beams.forEach((b) => b.setContext(context).draw());
-
-        // Save Coordinates for the Playhead
-        notes.forEach((n, nIdx) => {
-          const beatDuration = 60 / data.bpm;
-          const stepDuration = (beatDuration * 4) / 16;
-
-          positions.push({
-            x: (n.getAbsoluteX() * 1.2), // Adjust for scaling
-            y: (y * 1.2),               // Adjust for scaling
-            time: (mIdx * beatDuration * 4) + (nIdx * stepDuration)
-=======
-        // Generate Beams (The horizontal lines)
-        const beams = Beam.generateBeams(notes);
-        beams.forEach((b) => b.setContext(context).draw());
-
-        // Save X-coordinates for the playhead
-        notes.forEach((n, nIdx) => {
-          positions.push({
-            x: n.getAbsoluteX(),
-            time: (mIdx * (60 / data.bpm) * 4) + (nIdx * (60 / data.bpm / 4))
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
-          });
-        });
+        renderMeasure(
+          ctx, measure,
+          x, y,
+          STAVE_W, noteW,
+          isFirstInRow,   // clef on every first bar of row
+          isVeryFirst     // time sig only once, on bar 1
+        );
       });
 
-      setNotePositions(positions);
     } catch (err) {
-      console.error("VexFlow Render Error:", err);
+      console.error('[ScoreSection] VexFlow error:', err);
     }
   }, [data]);
 
-<<<<<<< HEAD
-  // Playhead coordinate logic
-  const getPlayheadPos = () => {
-    if (notePositions.length === 0) return { x: -100, y: 0 };
-    const closest = notePositions.reduce((prev, curr) => 
-      Math.abs(curr.time - currentTime) < Math.abs(prev.time - currentTime) ? curr : prev
-    );
-    return { x: closest.x, y: closest.y };
-  };
+  if (!data?.timeline?.length) return null;
 
   return (
-    <div className="flex flex-col items-center w-full">
-      {/* DOCUMENT PAPER */}
-      <div 
-        ref={scrollRef}
-        className="relative w-full max-w-[1100px] bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden transition-all duration-500"
-        style={{ minHeight: '600px' }}
-      >
-        {/* SONG TITLE - BIG LIKE IN PHOTO */}
-        <div className="pt-16 pb-10 text-center border-b border-gray-100 mx-20">
-          <h2 className="text-4xl font-light tracking-tight text-black normal-case">
-            {data.file_name || "Neural Transcription"}
+    <div className="w-full flex flex-col items-center bg-[#0a0a0a] p-10 rounded-3xl border border-white/5 shadow-2xl">
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="w-full max-w-[1150px] mb-10 flex justify-between items-end border-b border-white/10 pb-8">
+        <div className="flex flex-col gap-2">
+          <span className="text-yellow-400 font-black tracking-[0.5em] text-[10px] uppercase opacity-70">
+            Neural_Analysis_Report
+          </span>
+          <h2 className="text-white text-3xl font-black tracking-tighter uppercase truncate max-w-[700px]">
+            {data.file_name || 'Unknown_Track_Source'}
           </h2>
-          <p className="text-gray-400 text-[10px] mt-4 tracking-[0.5em] font-bold">KICKR AI // SCORE_OUTPUT</p>
         </div>
-
-        <div className="p-10 flex justify-center">
-          <div ref={containerRef} className="relative" />
+        <div className="flex gap-12 text-right font-mono text-white">
+          <div className="flex flex-col">
+            <span className="opacity-30 text-[10px] uppercase tracking-widest">Tempo</span>
+            <span className="text-xl font-bold italic">{Math.round(data.bpm)} BPM</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="opacity-30 text-[10px] uppercase tracking-widest">Accuracy</span>
+            <span className="text-green-400 text-xl font-bold italic">{data.accuracy ?? '98.2'}%</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="opacity-30 text-[10px] uppercase tracking-widest">Transients</span>
+            <span className="text-yellow-400 text-xl font-bold italic">{data.transients ?? '0'}</span>
+          </div>
         </div>
-
-        {/* DYNAMIC PLAYHEAD BOX (The yellow cursor) */}
-        <motion.div 
-          animate={{ x: getPlayheadPos().x, y: getPlayheadPos().y }}
-          transition={{ type: "spring", stiffness: 400, damping: 40 }}
-          className="absolute w-8 h-24 bg-yellow-500/20 border-x-2 border-yellow-500 pointer-events-none z-10"
-          style={{ top: 0, left: 0, marginTop: '75px', transformOrigin: 'center' }}
-        />
       </div>
-=======
-  // Find the X position of the current time in the song
-  const getPlayheadX = () => {
-    if (notePositions.length === 0) return -100;
-    const closest = notePositions.reduce((prev, curr) => 
-      Math.abs(curr.time - currentTime) < Math.abs(prev.time - currentTime) ? curr : prev
-    );
-    return closest.x;
-  };
 
-  return (
-    <div className="relative w-full overflow-x-auto bg-white p-10 rounded-[2.5rem] border-4 border-yellow-400 min-h-[250px] custom-scrollbar shadow-2xl">
-      <div ref={containerRef} className="relative" />
-      
-      {/* THE MOVING PLAYHEAD (VERTICAL LINE) */}
-      <motion.div 
-        animate={{ x: getPlayheadX() }}
-        transition={{ duration: 0.1, ease: "linear" }}
-        className="absolute top-0 bottom-0 w-1 bg-yellow-500/40 border-x border-yellow-600 z-10 pointer-events-none"
-        style={{ left: 0 }}
-      />
->>>>>>> 806e05c999d5d4cd4455ce3a5c31589cabf32df6
+      {/* ── Legend ─────────────────────────────────────────────────────────── */}
+      <div className="w-full max-w-[1150px] mb-6 flex flex-wrap gap-3 text-[9px] font-mono tracking-widest uppercase">
+        {[
+          { label: 'Hi-Hat  ×  top line',     yellow: false },
+          { label: 'Crash  ×  above staff',   yellow: false },
+          { label: 'Snare  middle space',      yellow: false },
+          { label: 'Hi / Mid / Floor Tom',     yellow: false },
+          { label: 'Kick  ↓  stems down',      yellow: true  },
+        ].map(({ label, yellow }) => (
+          <span
+            key={label}
+            className={`border border-white/10 px-3 py-1 rounded-full ${yellow ? 'text-yellow-400/70' : 'text-white/30'}`}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+
+      {/* ── Score paper ────────────────────────────────────────────────────── */}
+      <div
+        className="w-full bg-white rounded-2xl shadow-2xl overflow-x-auto"
+        style={{ padding: '2.5rem 2rem 3rem' }}
+      >
+        <div ref={containerRef} style={{ minWidth: '900px' }} />
+      </div>
+
+      {/* ── Key ────────────────────────────────────────────────────────────── */}
+      <div className="w-full max-w-[1150px] mt-5 flex gap-10 text-[9px] font-mono tracking-widest uppercase opacity-30">
+        <span>↑ Stems up = Hands</span>
+        <span>↓ Stems down = Kick</span>
+        <span>× = Cymbal / Hi-Hat</span>
+      </div>
+
+      <div className="mt-5 text-[9px] text-white/20 tracking-[0.3em] font-bold uppercase">
+        Engraved by Kickr_AI Neural Engine v5.4 // VexFlow // 2 bars · 16th grid
+      </div>
     </div>
   );
 }

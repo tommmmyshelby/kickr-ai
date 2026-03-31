@@ -90,3 +90,42 @@ async def send_verification_email(email: str, otp: str):
         # Fallback to terminal so you can still finish the demo if internet is slow
         print(f"FALLBACK_CODE: {otp}")
         return False
+    
+async def send_report_email(user_email: str, user_message: str):
+    """Sends a user-submitted bug report to the developer email."""
+    # Use your own mail or the MAIL_FROM as the destination
+    developer_email = MAIL_FROM 
+    
+    subject = f"KICKR AI - NEW PROBLEM REPORT FROM {user_email}"
+    
+    html_content = f"""
+    <html>
+        <body style="background-color: #070707; color: #ffffff; font-family: sans-serif; padding: 40px;">
+            <div style="border: 1px solid #fbbf24; padding: 30px; border-radius: 15px;">
+                <h2 style="color: #fbbf24;">New Problem Report</h2>
+                <p><b>From:</b> {user_email}</p>
+                <hr style="border: 0; border-top: 1px solid #333;">
+                <p><b>Message:</b></p>
+                <div style="background: #111; padding: 20px; border-radius: 10px; border: 1px solid #222;">
+                    {user_message}
+                </div>
+                <p style="font-size: 10px; opacity: 0.5; margin-top: 20px;">SENT VIA KICKR NEURAL REPORTING PROTOCOL</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    message = MIMEMultipart()
+    message["From"] = MAIL_FROM
+    message["To"] = developer_email
+    message["Subject"] = subject
+    message.attach(MIMEText(html_content, "html"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(MAIL_USERNAME, MAIL_PASSWORD)
+            server.sendmail(MAIL_FROM, developer_email, message.as_string())
+        return True
+    except Exception as e:
+        print(f"Failed to send report: {e}")
+        return False
